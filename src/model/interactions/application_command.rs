@@ -192,7 +192,17 @@ impl ApplicationCommandInteraction {
         Message::check_content_length(&map)?;
         Message::check_embed_length(&map)?;
 
-        http.as_ref().create_followup_message(&self.token, &Value::Object(map)).await
+        if interaction_response.1.is_empty() {
+            http.as_ref().create_followup_message(&self.token, &Value::Object(map)).await
+        } else {
+            http.as_ref()
+                .create_followup_message_with_files(
+                    &self.token,
+                    &Value::Object(map),
+                    interaction_response.1,
+                )
+                .await
+        }
     }
 
     /// Edits a followup response to the response sent.
@@ -227,9 +237,20 @@ impl ApplicationCommandInteraction {
         Message::check_content_length(&map)?;
         Message::check_embed_length(&map)?;
 
-        http.as_ref()
-            .edit_followup_message(&self.token, message_id.into().into(), &Value::Object(map))
-            .await
+        let message_id = message_id.into().into();
+
+        if interaction_response.1.is_empty() {
+            http.as_ref().edit_followup_message(&self.token, message_id, &Value::Object(map)).await
+        } else {
+            http.as_ref()
+                .edit_followup_message_and_attachments(
+                    &self.token,
+                    message_id,
+                    &Value::Object(map),
+                    interaction_response.1,
+                )
+                .await
+        }
     }
 
     /// Deletes a followup message.

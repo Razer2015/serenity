@@ -493,6 +493,100 @@ impl Http {
         .await
     }
 
+    /// Create a follow-up message with attachments for an Interaction.
+    ///
+    /// Functions the same as [`Self::execute_webhook`]
+    #[cfg(feature = "unstable_discord_api")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "unstable_discord_api")))]
+    pub async fn create_followup_message_with_files(
+        &self,
+        interaction_token: &str,
+        map: &Value,
+        files: impl IntoIterator<Item = AttachmentType<'_>>,
+    ) -> Result<Message> {
+        let uri = api!("/webhooks/{}/{}", self.application_id, interaction_token);
+        let mut url = match Url::parse(&uri) {
+            Ok(url) => url,
+            Err(_) => return Err(Error::Url(uri)),
+        };
+
+        if let Some(proxy) = &self.proxy {
+            url.set_host(proxy.host_str()).map_err(HttpError::Url)?;
+            url.set_scheme(proxy.scheme()).map_err(|_| HttpError::InvalidScheme)?;
+            url.set_port(proxy.port()).map_err(|_| HttpError::InvalidPort)?;
+        }
+
+        let mut multipart = reqwest::multipart::Form::new();
+
+        for (file_num, file) in files.into_iter().enumerate() {
+            match file.into() {
+                AttachmentType::Bytes {
+                    data,
+                    filename,
+                } => {
+                    multipart = multipart.part(
+                        file_num.to_string(),
+                        Part::bytes(data.into_owned()).file_name(filename),
+                    );
+                },
+                AttachmentType::File {
+                    file,
+                    filename,
+                } => {
+                    let mut buf = Vec::new();
+                    file.try_clone().await?.read_to_end(&mut buf).await?;
+
+                    multipart =
+                        multipart.part(file_num.to_string(), Part::stream(buf).file_name(filename));
+                },
+                AttachmentType::Path(path) => {
+                    let filename =
+                        path.file_name().map(|filename| filename.to_string_lossy().into_owned());
+                    let mut file = File::open(path).await?;
+                    let mut buf = vec![];
+                    file.read_to_end(&mut buf).await?;
+
+                    let part = match filename {
+                        Some(filename) => Part::bytes(buf).file_name(filename),
+                        None => Part::bytes(buf),
+                    };
+
+                    multipart = multipart.part(file_num.to_string(), part);
+                },
+                AttachmentType::Image(url) => {
+                    let url = Url::parse(url).map_err(|_| Error::Url(url.to_string()))?;
+                    let filename = url
+                        .path_segments()
+                        .and_then(|segments| segments.last().map(ToString::to_string))
+                        .ok_or_else(|| Error::Url(url.to_string()))?;
+                    let response = self.client.get(url).send().await?;
+                    let mut bytes = response.bytes().await?;
+                    let mut picture: Vec<u8> = vec![0; bytes.len()];
+                    bytes.copy_to_slice(&mut picture[..]);
+                    multipart = multipart.part(
+                        file_num.to_string(),
+                        Part::bytes(picture).file_name(filename.to_string()),
+                    );
+                },
+            }
+        }
+
+        multipart = multipart.text("payload_json", serde_json::to_string(&map)?);
+
+        let response = self
+            .client
+            .post(url)
+            .multipart(multipart)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(HttpError::from_response(response).await.into());
+        }
+
+        response.json::<Message>().await.map_err(From::from)
+    }
+
     /// Creates a new global command.
     ///
     /// New global commands will be available in all guilds after 1 hour.
@@ -1204,6 +1298,103 @@ impl Http {
             },
         })
         .await
+    }
+
+    /// Edits a follow-up message and its attachments for an interaction.
+    ///
+    /// Refer to Discord's [docs] for Edit Webhook Message for field information.
+    ///
+    /// [docs]: https://discord.com/developers/docs/resources/webhook#edit-webhook-message
+    #[cfg(feature = "unstable_discord_api")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "unstable_discord_api")))]
+    pub async fn edit_followup_message_and_attachments(
+        &self,
+        interaction_token: &str,
+        message_id: u64,
+        map: &Value,
+        files: impl IntoIterator<Item = AttachmentType<'_>>,
+    ) -> Result<Message> {
+        let uri = api!("/webhooks/{}/{}/messages/{}", self.application_id, interaction_token, message_id);
+        let mut url = match Url::parse(&uri) {
+            Ok(url) => url,
+            Err(_) => return Err(Error::Url(uri)),
+        };
+
+        if let Some(proxy) = &self.proxy {
+            url.set_host(proxy.host_str()).map_err(HttpError::Url)?;
+            url.set_scheme(proxy.scheme()).map_err(|_| HttpError::InvalidScheme)?;
+            url.set_port(proxy.port()).map_err(|_| HttpError::InvalidPort)?;
+        }
+
+        let mut multipart = reqwest::multipart::Form::new();
+
+        for (file_num, file) in files.into_iter().enumerate() {
+            match file.into() {
+                AttachmentType::Bytes {
+                    data,
+                    filename,
+                } => {
+                    multipart = multipart.part(
+                        file_num.to_string(),
+                        Part::bytes(data.into_owned()).file_name(filename),
+                    );
+                },
+                AttachmentType::File {
+                    file,
+                    filename,
+                } => {
+                    let mut buf = Vec::new();
+                    file.try_clone().await?.read_to_end(&mut buf).await?;
+
+                    multipart =
+                        multipart.part(file_num.to_string(), Part::stream(buf).file_name(filename));
+                },
+                AttachmentType::Path(path) => {
+                    let filename =
+                        path.file_name().map(|filename| filename.to_string_lossy().into_owned());
+                    let mut file = File::open(path).await?;
+                    let mut buf = vec![];
+                    file.read_to_end(&mut buf).await?;
+
+                    let part = match filename {
+                        Some(filename) => Part::bytes(buf).file_name(filename),
+                        None => Part::bytes(buf),
+                    };
+
+                    multipart = multipart.part(file_num.to_string(), part);
+                },
+                AttachmentType::Image(url) => {
+                    let url = Url::parse(url).map_err(|_| Error::Url(url.to_string()))?;
+                    let filename = url
+                        .path_segments()
+                        .and_then(|segments| segments.last().map(ToString::to_string))
+                        .ok_or_else(|| Error::Url(url.to_string()))?;
+                    let response = self.client.get(url).send().await?;
+                    let mut bytes = response.bytes().await?;
+                    let mut picture: Vec<u8> = vec![0; bytes.len()];
+                    bytes.copy_to_slice(&mut picture[..]);
+                    multipart = multipart.part(
+                        file_num.to_string(),
+                        Part::bytes(picture).file_name(filename.to_string()),
+                    );
+                },
+            }
+        }
+
+        multipart = multipart.text("payload_json", serde_json::to_string(&map)?);
+
+        let response = self
+            .client
+            .patch(url)
+            .multipart(multipart)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(HttpError::from_response(response).await.into());
+        }
+
+        response.json::<Message>().await.map_err(From::from)
     }
 
     /// Get a follow-up message for an interaction.
